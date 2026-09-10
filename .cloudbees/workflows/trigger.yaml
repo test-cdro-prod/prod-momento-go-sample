@@ -17,10 +17,10 @@ jobs:
           apk add --update curl > /dev/null 2>&1
           apk add --update jq > /dev/null 2>&1 
 
-          ORG_ID="049e5b60-96da-4517-a21b-70c67af0b261"
-          COMPONENT_ID="8576ff4e-0630-44f0-95f4-a271f2db1608"
+          ORG_ID="fafadf1d-159d-447b-46e9-a0193467420e"
+          COMPONENT_ID="603bd16c-97cd-45fe-9c48-359e86f24a52"
           TRIGGER_URL="https://api.cloudbees.io/v2/components/${COMPONENT_ID}/trigger"
-          POLL_URL="https://api.cloudbees.io/v1/organizations/${ORG_ID}/components/${COMPONENT_ID}/runs?last=1&filter.workflowName=artifact-label"
+          POLL_URL="https://api.cloudbees.io/v1/organizations/${ORG_ID}/components/${COMPONENT_ID}/runs?last=1&filter.workflowName=api-regression"
 
           POLL_INTERVAL=30
           MAX_WAIT=3600  # 60 minutes
@@ -33,8 +33,12 @@ jobs:
             --header "Authorization: Bearer ${{secrets.QA_DEPLOYMENT_TOKEN}}" \
             --data "{
                     \"componentId\": \"${COMPONENT_ID}\",
-                    \"branchName\": \"main\",
-                    \"workflowFileName\": \"artifact-label.yaml\"
+                    \"branchName\": \"cbp-48875\",
+                    \"workflowFileName\": \"api-regression.yaml\",
+                    \"inputs\": {
+                      \"environment\": \"QA\",
+                      \"runId\": \"${{ cloudbees.run_id }}\"
+                    }
                   }")
 
           HTTP_BODY=$(cat "$TRIGGER_BODY_FILE")
