@@ -14,70 +14,66 @@ jobs:
         run: |
           echo "hello world"
 
-      - name: Trigger API - full regression suite in QA
-        uses: docker://alpine:3.20.3
-        run: |
-            apk add --update curl > /dev/null 2>&1
-            apk add --update jq > /dev/null 2>&1 
+          apk add --update curl > /dev/null 2>&1
+          apk add --update jq > /dev/null 2>&1 
 
-            ORG_ID="049e5b60-96da-4517-a21b-70c67af0b261"
-            COMPONENT_ID="8576ff4e-0630-44f0-95f4-a271f2db1608"
-            TRIGGER_URL="https://api.cloudbees.io/v2/components/${COMPONENT_ID}/trigger"
-            POLL_URL="https://api.cloudbees.io/v1/organizations/${ORG_ID}/components/${COMPONENT_ID}/runs?last=1&filter.workflowName=artifact-label"
+          ORG_ID="049e5b60-96da-4517-a21b-70c67af0b261"
+          COMPONENT_ID="8576ff4e-0630-44f0-95f4-a271f2db1608"
+          TRIGGER_URL="https://api.cloudbees.io/v2/components/${COMPONENT_ID}/trigger"
+          POLL_URL="https://api.cloudbees.io/v1/organizations/${ORG_ID}/components/${COMPONENT_ID}/runs?last=1&filter.workflowName=artifact-label"
 
-            POLL_INTERVAL=30
-            MAX_WAIT=3600  # 60 minutes
+          POLL_INTERVAL=30
+          MAX_WAIT=3600  # 60 minutes
 
-            echo "Triggering workflow..."
-            TRIGGER_BODY_FILE=$(mktemp)
-            HTTP_CODE=$(curl --silent --output "$TRIGGER_BODY_FILE" --write-out "%{http_code}" --location "$TRIGGER_URL" \
-              --header 'Content-Type: application/json' \
+          echo "Triggering workflow..."
+          TRIGGER_BODY_FILE=$(mktemp)
+          HTTP_CODE=$(curl --silent --output "$TRIGGER_BODY_FILE" --write-out "%{http_code}" --location "$TRIGGER_URL" \
+            --header 'Content-Type: application/json' \
+            --header 'Accept: application/json' \
+            --header "Authorization: Bearer ${{secrets.QA_DEPLOYMENT_TOKEN}}" \
+            --data "{
+                    \"componentId\": \"${COMPONENT_ID}\",
+                    \"branchName\": \"main\",
+                    \"workflowFileName\": \"artifact-label.yaml\"
+                  }")
+
+          HTTP_BODY=$(cat "$TRIGGER_BODY_FILE")
+          rm -f "$TRIGGER_BODY_FILE"
+
+          if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+            echo "ERROR: Trigger request failed with HTTP $HTTP_CODE" >&2
+            echo "$HTTP_BODY" >&2
+            exit 1
+          fi
+
+          TRIGGER_ID=$(echo "$HTTP_BODY" | jq -r '.triggerId // empty')
+          echo "Trigger successful. triggerId: ${TRIGGER_ID}"
+
+          echo "Waiting 40 seconds before polling..."
+          sleep 40
+
+          ELAPSED=0
+
+          while [ "$ELAPSED" -lt "$MAX_WAIT" ]; do
+            POLL_RESPONSE=$(curl --silent --location "$POLL_URL" \
               --header 'Accept: application/json' \
-              --header "Authorization: Bearer ${{secrets.QA_DEPLOYMENT_TOKEN}}" \
-              --data "{
-                      \"componentId\": \"${COMPONENT_ID}\",
-                      \"branchName\": \"main\",
-                      \"workflowFileName\": \"artifact-label.yaml\",
-                    }")
+              --header "Authorization: Bearer ${{secrets.QA_DEPLOYMENT_TOKEN}}")
 
-            HTTP_BODY=$(cat "$TRIGGER_BODY_FILE")
-            rm -f "$TRIGGER_BODY_FILE"
+            STATUS=$(echo "$POLL_RESPONSE" | jq -r '.runs[0].status // empty')
 
-            if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
-              echo "ERROR: Trigger request failed with HTTP $HTTP_CODE" >&2
-              echo "$HTTP_BODY" >&2
-              exit 1
+            echo "[$(date '+%H:%M:%S')] Status: ${STATUS:-UNKNOWN} (elapsed: ${ELAPSED}s)"
+
+            if [ "$STATUS" = "SUCCEEDED" ]; then
+              echo "Run completed successfully."
+              exit 0
+            elif [ "$STATUS" = "FAILED" ]; then
+              echo "Run failed." >&2
+              exit 0
             fi
 
-            TRIGGER_ID=$(echo "$HTTP_BODY" | jq -r '.triggerId // empty')
-            echo "Trigger successful. triggerId: ${TRIGGER_ID}"
+            ELAPSED=$((ELAPSED + POLL_INTERVAL))
+            sleep "$POLL_INTERVAL"
+          done
 
-            echo "Waiting 40 seconds before polling..."
-            sleep 40
-
-            ELAPSED=0
-
-            while [ "$ELAPSED" -lt "$MAX_WAIT" ]; do
-              POLL_RESPONSE=$(curl --silent --location "$POLL_URL" \
-                --header 'Accept: application/json' \
-                --header "Authorization: Bearer ${{secrets.QA_DEPLOYMENT_TOKEN}}")
-
-              STATUS=$(echo "$POLL_RESPONSE" | jq -r '.runs[0].status // empty')
-
-              echo "[$(date '+%H:%M:%S')] Status: ${STATUS:-UNKNOWN} (elapsed: ${ELAPSED}s)"
-
-              if [ "$STATUS" = "SUCCEEDED" ]; then
-                echo "Run completed successfully."
-                exit 0
-              elif [ "$STATUS" = "FAILED" ]; then
-                echo "Run failed." >&2
-                exit 0
-              fi
-
-              ELAPSED=$((ELAPSED + POLL_INTERVAL))
-              sleep "$POLL_INTERVAL"
-            done
-
-            echo "ERROR: Timed out after ${MAX_WAIT}s waiting for run to complete." >&2
-            exit 1
-
+          echo "ERROR: Timed out after ${MAX_WAIT}s waiting for run to complete." >&2
+          exit 1
